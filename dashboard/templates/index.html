@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Together AI Concurrency Test Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .header h1 {
+            color: #2d3748;
+            margin-bottom: 8px;
+            font-size: 32px;
+            font-weight: 700;
+        }
+        
+        .header p {
+            color: #718096;
+            font-size: 16px;
+        }
+        
+        .api-key-panel {
+            background: white;
+            padding: 24px;
+            border-radius: 16px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        
+        .api-key-panel h3 {
+            color: #2d3748;
+            margin-bottom: 12px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .api-key-input-group {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        
+        .api-key-input-group input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .api-key-input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .api-key-status {
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .api-key-status.valid {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        
+        .api-key-status.invalid {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+        
+        .config-panel {
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        
+        .config-panel h2 {
+            margin-bottom: 24px;
+            color: #2d3748;
+            font-size: 24px;
+            font-weight: 700;
+        }
+        
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+        
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .form-group label {
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #4a5568;
+            font-size: 14px;
+        }
+        
+        .form-group input,
+        .form-group select {
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.2s;
+            background: white;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .form-group input::placeholder {
+            color: #a0aec0;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+        
+        button {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        }
+        
+        .btn-danger {
+            background: #e53e3e;
+            color: white;
+        }
+        
+        .btn-danger:hover:not(:disabled) {
+            background: #c53030;
+            transform: translateY(-2px);
+        }
+        
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        .status-panel {
+            background: white;
+            padding: 24px;
+            border-radius: 16px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        
+        .status-panel h2 {
+            margin-bottom: 16px;
+            color: #2d3748;
+            font-size: 20px;
+            font-weight: 600;
+        }
+        
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .status-indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        
+        .status-indicator.running {
+            background: #48bb78;
+            animation: pulse 2s infinite;
+            box-shadow: 0 0 0 4px rgba(72, 187, 120, 0.2);
+        }
+        
+        .status-indicator.stopped {
+            background: #e53e3e;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e2e8f0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 16px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+        
+        .status-info {
+            color: #4a5568;
+            font-size: 14px;
+            margin-top: 8px;
+        }
+        
+        .status-success {
+            color: #48bb78;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+        
+        .charts-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .chart-panel {
+            background: white;
+            padding: 24px;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        
+        .chart-panel h3 {
+            margin-bottom: 16px;
+            color: #2d3748;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .results-table {
+            background: white;
+            padding: 24px;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+        
+        .results-table h2 {
+            margin-bottom: 20px;
+            color: #2d3748;
+            font-size: 24px;
+            font-weight: 700;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 14px 16px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        th {
+            background: #f7fafc;
+            font-weight: 600;
+            color: #4a5568;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        tbody tr {
+            transition: background 0.2s;
+        }
+        
+        tbody tr:hover {
+            background: #f7fafc;
+        }
+        
+        .error-message {
+            background: #fed7d7;
+            color: #742a2a;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-top: 16px;
+            border-left: 4px solid #e53e3e;
+        }
+        
+        .info-icon {
+            display: inline-block;
+            margin-left: 6px;
+            cursor: help;
+            font-size: 12px;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        
+        .info-icon:hover {
+            opacity: 1;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .badge-success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        
+        .badge-warning {
+            background: #feebc8;
+            color: #7c2d12;
+        }
+        
+        @media (max-width: 768px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .charts-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .button-group {
+                flex-direction: column;
+            }
+            
+            button {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Together AI Concurrency Test</h1>
+            <p>Test API performance under concurrent load conditions</p>
+        </div>
+        
+        <div class="api-key-panel">
+            <h3>API Configuration</h3>
+            <div class="api-key-input-group">
+                <input 
+                    type="password" 
+                    id="apiKey" 
+                    placeholder="Enter your Together AI API key"
+                    autocomplete="off"
+                >
+                <div id="apiKeyStatus" class="api-key-status invalid" style="display: none;">
+                    Required
+                </div>
+            </div>
+        </div>
+        
+        <div class="config-panel">
+            <h2>Test Configuration</h2>
+            <form id="testConfigForm">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="model">Model</label>
+                        <input 
+                            type="text" 
+                            id="model" 
+                            value="vishwa/Llama-3.3-70B-Instruct-Turbo-256" 
+                            placeholder="e.g., meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+                            required
+                        >
+                    </div>
+                    <div class="form-group">
+                        <label for="concurrency">Concurrency Levels</label>
+                        <input 
+                            type="text" 
+                            id="concurrency" 
+                            value="32,64,128,256" 
+                            placeholder="e.g., 32,64,128,256 (max 256 per value)"
+                            required
+                        >
+                        <small style="color: #718096; margin-top: 4px; font-size: 12px;">
+                            Comma-separated numbers of simultaneous requests (max 256 per value)
+                        </small>
+                    </div>
+                    <div class="form-group">
+                        <label for="maxTokens">Max Tokens (Optional)</label>
+                        <input 
+                            type="text" 
+                            id="maxTokens" 
+                            value="" 
+                            placeholder="e.g., 50000,100000,200000 (max 200k)"
+                            pattern="[0-9,]+"
+                        >
+                        <small style="color: #718096; margin-top: 4px; font-size: 12px;">
+                            Single value or comma-separated (e.g., 50000,100000,200000). Max 200k per value (input + output combined)
+                        </small>
+                    </div>
+                </div>
+                <div class="button-group">
+                    <button type="submit" class="btn-primary" id="startBtn">
+                        <span>▶</span>
+                        <span>Start Test</span>
+                    </button>
+                    <button type="button" class="btn-danger" id="stopBtn" disabled>
+                        <span>⏹</span>
+                        <span>Stop Test</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+        
+        <div class="status-panel">
+            <h2>Test Status</h2>
+            <div class="status-row">
+                <span class="status-indicator stopped" id="statusIndicator"></span>
+                <span id="statusText" style="font-weight: 600; color: #2d3748;">Ready</span>
+            </div>
+            <div id="progressInfo" class="status-info"></div>
+            <div id="successfulRequests" class="status-success"></div>
+            <div class="progress-bar" id="progressBar" style="display: none;">
+                <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+            </div>
+            <div id="errorMessage"></div>
+        </div>
+        
+        <div class="charts-container">
+            <div class="chart-panel">
+                <h3>Latency vs Concurrency</h3>
+                <div id="latencyChart"></div>
+            </div>
+            <div class="chart-panel">
+                <h3>Success Rate vs Concurrency</h3>
+                <div id="successRateChart"></div>
+            </div>
+            <div class="chart-panel">
+                <h3>Throughput vs Concurrency</h3>
+                <div id="throughputChart"></div>
+            </div>
+            <div class="chart-panel">
+                <h3>Token Throughput vs Concurrency</h3>
+                <div id="tokenThroughputChart"></div>
+            </div>
+        </div>
+        
+        <div class="results-table">
+            <h2>Test Results</h2>
+            <table id="resultsTable">
+                <thead>
+                    <tr>
+                        <th>Concurrency</th>
+                        <th>Max Tokens</th>
+                        <th>Completed</th>
+                        <th>Input Tokens</th>
+                        <th>Output Tokens</th>
+                        <th>Success Rate</th>
+                        <th>Avg Latency (s)</th>
+                        <th>P95 Latency (s)</th>
+                        <th>Throughput (req/s)</th>
+                        <th>Token Throughput (tokens/s)</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsTableBody">
+                    <tr id="emptyTableMessage">
+                        <td colspan="9" style="text-align: center; padding: 60px; color: #a0aec0;">
+                            <div style="font-size: 48px; margin-bottom: 16px;">📊</div>
+                            <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px; color: #718096;">
+                                No test results yet
+                            </div>
+                            <div style="font-size: 14px; color: #a0aec0;">
+                                Configure your test above and click "Start Test" to see results here
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <script>
+        // ============================================================================
+        // INITIALIZATION
+        // ============================================================================
+        
+        // Initialize SocketIO connection to server for real-time communication
+        const socket = io();
+        
+        // Global state variables
+        let testResults = [];      // Array to store all test results
+        let currentApiKey = '';    // Current API key entered by user
+        
+        // ============================================================================
+        // CHART CONFIGURATION
+        // ============================================================================
+        
+        // Initialize charts with consistent styling
+        // These charts will display performance metrics in real-time
+        const chartLayout = {
+            font: { family: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', size: 12 },
+            plot_bgcolor: 'rgba(0,0,0,0)',
+            paper_bgcolor: 'rgba(0,0,0,0)',
+            margin: { l: 50, r: 20, t: 20, b: 50 },
+            xaxis: { gridcolor: '#e2e8f0', showgrid: true },
+            yaxis: { gridcolor: '#e2e8f0', showgrid: true }
+        };
+        
+        const latencyChart = {
+            data: [{ 
+                x: [], 
+                y: [], 
+                type: 'scatter', 
+                mode: 'lines+markers', 
+                name: 'Avg Latency',
+                line: { color: '#667eea', width: 3 },
+                marker: { size: 8, color: '#667eea' }
+            }],
+            layout: { 
+                ...chartLayout,
+                xaxis: { ...chartLayout.xaxis, title: 'Concurrency' }, 
+                yaxis: { ...chartLayout.yaxis, title: 'Latency (s)' } 
+            }
+        };
+        
+        const successRateChart = {
+            data: [{ 
+                x: [], 
+                y: [], 
+                type: 'scatter', 
+                mode: 'lines+markers', 
+                name: 'Success Rate',
+                line: { color: '#48bb78', width: 3 },
+                marker: { size: 8, color: '#48bb78' }
+            }],
+            layout: { 
+                ...chartLayout,
+                xaxis: { ...chartLayout.xaxis, title: 'Concurrency' }, 
+                yaxis: { ...chartLayout.yaxis, title: 'Success Rate (%)', range: [0, 100] } 
+            }
+        };
+        
+        const throughputChart = {
+            data: [{ 
+                x: [], 
+                y: [], 
+                type: 'scatter', 
+                mode: 'lines+markers', 
+                name: 'Throughput',
+                line: { color: '#ed8936', width: 3 },
+                marker: { size: 8, color: '#ed8936' }
+            }],
+            layout: { 
+                ...chartLayout,
+                xaxis: { ...chartLayout.xaxis, title: 'Concurrency' }, 
+                yaxis: { ...chartLayout.yaxis, title: 'Requests/s' } 
+            }
+        };
+        
+        const tokenThroughputChart = {
+            data: [{ 
+                x: [], 
+                y: [], 
+                type: 'scatter', 
+                mode: 'lines+markers', 
+                name: 'Token Throughput',
+                line: { color: '#9f7aea', width: 3 },
+                marker: { size: 8, color: '#9f7aea' }
+            }],
+            layout: { 
+                ...chartLayout,
+                xaxis: { ...chartLayout.xaxis, title: 'Concurrency' }, 
+                yaxis: { ...chartLayout.yaxis, title: 'Tokens/s' } 
+            }
+        };
+        
+        // Initialize all charts with empty data
+        // Charts will be updated as test results come in
+        Plotly.newPlot('latencyChart', latencyChart.data, latencyChart.layout, {responsive: true});
+        Plotly.newPlot('successRateChart', successRateChart.data, successRateChart.layout, {responsive: true});
+        Plotly.newPlot('throughputChart', throughputChart.data, throughputChart.layout, {responsive: true});
+        Plotly.newPlot('tokenThroughputChart', tokenThroughputChart.data, tokenThroughputChart.layout, {responsive: true});
+        
+        // ============================================================================
+        // API KEY MANAGEMENT
+        // ============================================================================
+        
+        // API Key input validation and management
+        // Validates API key input and provides visual feedback
+        const apiKeyInput = document.getElementById('apiKey');
+        const apiKeyStatus = document.getElementById('apiKeyStatus');
+        
+        apiKeyInput.addEventListener('input', (e) => {
+            currentApiKey = e.target.value.trim();
+            if (currentApiKey.length > 0) {
+                apiKeyStatus.textContent = '✓ Valid';
+                apiKeyStatus.className = 'api-key-status valid';
+                apiKeyStatus.style.display = 'block';
+            } else {
+                apiKeyStatus.textContent = 'Required';
+                apiKeyStatus.className = 'api-key-status invalid';
+                apiKeyStatus.style.display = 'block';
+            }
+        });
+        
+        // Check for API key in localStorage
+        const savedApiKey = localStorage.getItem('together_api_key');
+        if (savedApiKey) {
+            apiKeyInput.value = savedApiKey;
+            currentApiKey = savedApiKey;
+            apiKeyStatus.textContent = '✓ Loaded';
+            apiKeyStatus.className = 'api-key-status valid';
+            apiKeyStatus.style.display = 'block';
+        }
+        
+        // ============================================================================
+        // SOCKET EVENT HANDLERS
+        // ============================================================================
+        
+        // Handle test_started event: Test has begun
+        // Updates UI to show test is running and disables start button
+        socket.on('test_started', (data) => {
+            updateStatus('running', 'Test running...');
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            testResults = [];
+            updateProgress(0, data.total_combinations);
+            document.getElementById('successfulRequests').textContent = '';
+        });
+        
+        // Handle test_progress event: Test progress update
+        // Updates progress bar and displays current test configuration
+        socket.on('test_progress', (data) => {
+            updateProgress(data.current, data.total);
+            const testInfo = data.current_test;
+            let infoText = `Testing ${testInfo.concurrency} concurrent requests`;
+            if (testInfo.max_tokens !== null && testInfo.max_tokens !== undefined) {
+                infoText += ` (max tokens: ${testInfo.max_tokens})`;
+            } else {
+                infoText += ` (default max tokens)`;
+            }
+            document.getElementById('progressInfo').textContent = infoText;
+        });
+        
+        // Handle test_result event: New test result received
+        // Adds result to results array and updates charts and table
+        socket.on('test_result', (data) => {
+            testResults.push(data.result);
+            updateCharts();
+            updateResultsTable();
+            
+            const result = data.result;
+            document.getElementById('successfulRequests').textContent = 
+                `✓ ${result.successful}/${result.concurrency} requests successful (${result.metrics.success_rate.toFixed(1)}%)`;
+        });
+        
+        // Handle test_completed event: All tests finished
+        // Resets UI state and displays completion message
+        socket.on('test_completed', (data) => {
+            updateStatus('stopped', 'Test completed');
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('progressBar').style.display = 'none';
+            document.getElementById('progressInfo').textContent = `Results saved to: ${data.filepath}`;
+        });
+        
+        // Handle test_error event: Error occurred during testing
+        // Displays error message and resets UI state
+        socket.on('test_error', (data) => {
+            updateStatus('stopped', 'Test error');
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            showError(data.error);
+        });
+        
+        // Form submission handler with client-side validation
+        // This validates inputs before sending to server to provide immediate feedback
+        document.getElementById('testConfigForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            // Step 1: Validate API key is provided
+            if (!currentApiKey || currentApiKey.length === 0) {
+                showError('Please enter your Together AI API key');
+                apiKeyInput.focus();
+                return;
+            }
+            
+            // Step 2: Get and trim form values
+            const model = document.getElementById('model').value.trim();
+            const concurrency = document.getElementById('concurrency').value.trim();
+            const maxTokens = document.getElementById('maxTokens').value.trim();
+            
+            // Step 3: XSS prevention - escape HTML to prevent script injection
+            // This function safely escapes HTML special characters
+            const escapeHtml = (text) => {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            };
+            
+            // Step 4: Validate concurrency format
+            // Must be comma-separated numbers (e.g., "32,64,128")
+            // Each value must be between 1 and 256
+            if (!concurrency || !/^[\d,\s]+$/.test(concurrency)) {
+                showError('Invalid concurrency format. Use comma-separated numbers (e.g., 32,64,128). Maximum 256 per value.');
+                return;
+            }
+            
+            // Validate individual concurrency values
+            const concurrencyValues = concurrency.split(',').map(x => parseInt(x.trim())).filter(x => !isNaN(x));
+            for (const val of concurrencyValues) {
+                if (val <= 0 || val > 256) {
+                    showError(`Concurrency level must be between 1 and 256, got: ${val}`);
+                    return;
+                }
+            }
+            
+            // Step 5: Validate max tokens format if provided
+            // Must be comma-separated numbers (e.g., "500,1000,2000")
+            // Each value must be between 1 and 200000
+            if (maxTokens && !/^[\d,\s]+$/.test(maxTokens)) {
+                showError('Invalid max tokens format. Use comma-separated numbers (e.g., 500,1000,2000). Maximum 200000 per value.');
+                return;
+            }
+            
+            // Validate individual max token values
+            if (maxTokens) {
+                const maxTokenValues = maxTokens.split(',').map(x => parseInt(x.trim())).filter(x => !isNaN(x));
+                for (const val of maxTokenValues) {
+                    if (val <= 0 || val > 200000) {
+                        showError(`Max tokens must be between 1 and 200000, got: ${val}`);
+                        return;
+                    }
+                }
+            }
+            
+            // Step 6: Save API key to localStorage for convenience
+            // Note: localStorage is vulnerable to XSS attacks, but acceptable for this tool
+            // In production, consider more secure storage methods
+            localStorage.setItem('together_api_key', currentApiKey);
+            
+            // Step 7: Prepare configuration object to send to server
+            const config = {
+                api_key: currentApiKey,
+                model: escapeHtml(model),  // Sanitize model name
+                concurrency: concurrency,
+                max_tokens: maxTokens || '',  // Empty string if not provided
+            };
+            
+            // Step 8: Emit start_test event to server via SocketIO
+            socket.emit('start_test', config);
+        });
+        
+        // Handle stop button click: Request test cancellation
+        document.getElementById('stopBtn').addEventListener('click', () => {
+            socket.emit('stop_test');
+        });
+        
+        // ============================================================================
+        // UI UPDATE FUNCTIONS
+        // ============================================================================
+        
+        // Update test status indicator and text
+        // status: 'running' or 'stopped'
+        // text: Status message to display
+        function updateStatus(status, text) {
+            const indicator = document.getElementById('statusIndicator');
+            indicator.className = `status-indicator ${status}`;
+            document.getElementById('statusText').textContent = text;
+        }
+        
+        // Update progress bar based on current test progress
+        // current: Current test number
+        // total: Total number of tests
+        function updateProgress(current, total) {
+            const percentage = total > 0 ? (current / total) * 100 : 0;
+            document.getElementById('progressFill').style.width = percentage + '%';
+            document.getElementById('progressBar').style.display = 'block';
+        }
+        
+        // Display error message to user
+        // message: Error message to display
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.innerHTML = `<div class="error-message">${message}</div>`;
+            setTimeout(() => {
+                errorDiv.innerHTML = '';
+            }, 8000);
+        }
+        
+        // Update all charts with latest test results
+        // Groups results by concurrency level and calculates averages
+        // This provides a clear view of performance trends
+        function updateCharts() {
+            // Group results by concurrency and max_tokens for better visualization
+            const grouped = {};
+            testResults.forEach(r => {
+                const concurrency = r.concurrency;
+                const maxTokens = r.max_tokens !== null && r.max_tokens !== undefined ? r.max_tokens : 'default';
+                const key = `${concurrency}_${maxTokens}`;
+                if (!grouped[key]) {
+                    grouped[key] = {
+                        concurrency: concurrency,
+                        max_tokens: maxTokens,
+                        results: []
+                    };
+                }
+                grouped[key].results.push(r);
+            });
+            
+            // For simple view: group by concurrency (average across max_tokens)
+            const concurrencyGroups = {};
+            testResults.forEach(r => {
+                const c = r.concurrency;
+                if (!concurrencyGroups[c]) {
+                    concurrencyGroups[c] = [];
+                }
+                concurrencyGroups[c].push(r);
+            });
+            
+            const concurrencyLevels = Object.keys(concurrencyGroups).map(Number).sort((a, b) => a - b);
+            const avgLatencies = concurrencyLevels.map(c => {
+                const results = concurrencyGroups[c];
+                const avg = results.reduce((sum, r) => sum + r.metrics.avg_latency, 0) / results.length;
+                return avg;
+            });
+            const avgSuccessRates = concurrencyLevels.map(c => {
+                const results = concurrencyGroups[c];
+                const avg = results.reduce((sum, r) => sum + r.metrics.success_rate, 0) / results.length;
+                return avg;
+            });
+            const avgThroughput = concurrencyLevels.map(c => {
+                const results = concurrencyGroups[c];
+                const avg = results.reduce((sum, r) => sum + r.metrics.throughput, 0) / results.length;
+                return avg;
+            });
+            const avgTokenThroughput = concurrencyLevels.map(c => {
+                const results = concurrencyGroups[c];
+                const avg = results.reduce((sum, r) => sum + r.metrics.token_throughput, 0) / results.length;
+                return avg;
+            });
+            
+            Plotly.update('latencyChart', { x: [concurrencyLevels], y: [avgLatencies] }, {});
+            Plotly.update('successRateChart', { x: [concurrencyLevels], y: [avgSuccessRates] }, {});
+            Plotly.update('throughputChart', { x: [concurrencyLevels], y: [avgThroughput] }, {});
+            Plotly.update('tokenThroughputChart', { x: [concurrencyLevels], y: [avgTokenThroughput] }, {});
+        }
+        
+        // Update results table with latest test results
+        // Displays all test results in a sortable table format
+        // Includes XSS protection by escaping HTML content
+        function updateResultsTable() {
+            const tbody = document.getElementById('resultsTableBody');
+            
+            // Show empty state if no results yet
+            if (testResults.length === 0) {
+                tbody.innerHTML = `
+                    <tr id="emptyTableMessage">
+                        <td colspan="10" style="text-align: center; padding: 60px; color: #a0aec0;">
+                            <div style="font-size: 48px; margin-bottom: 16px;">📊</div>
+                            <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px; color: #718096;">
+                                No test results yet
+                            </div>
+                            <div style="font-size: 14px; color: #a0aec0;">
+                                Configure your test above and click "Start Test" to see results here
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            } else {
+                // Escape HTML to prevent XSS
+                const escapeHtml = (text) => {
+                    if (text === null || text === undefined) return 'default';
+                    const div = document.createElement('div');
+                    div.textContent = text;
+                    return div.innerHTML;
+                };
+                
+                tbody.innerHTML = testResults.map(r => `
+                    <tr>
+                        <td><strong>${r.concurrency}</strong></td>
+                        <td>${escapeHtml(r.max_tokens !== null && r.max_tokens !== undefined ? r.max_tokens : 'default')}</td>
+                        <td><span class="badge ${r.successful === r.concurrency ? 'badge-success' : 'badge-warning'}">${r.successful}/${r.concurrency}</span></td>
+                        <td>${r.input_tokens.toLocaleString()}</td>
+                        <td>${r.output_tokens.toLocaleString()}</td>
+                        <td><strong>${r.metrics.success_rate.toFixed(1)}%</strong></td>
+                        <td>${r.metrics.avg_latency.toFixed(2)}</td>
+                        <td>${r.metrics.p95_latency.toFixed(2)}</td>
+                        <td>${r.metrics.throughput.toFixed(2)}</td>
+                        <td>${r.metrics.token_throughput.toFixed(0)}</td>
+                    </tr>
+                `).join('');
+            }
+        }
+    </script>
+</body>
+</html>
+
+
