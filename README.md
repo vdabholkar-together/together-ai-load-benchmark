@@ -5,14 +5,14 @@ It enables data-driven capacity planning by identifying rate limits, measuring l
 The tool provides both command-line and web dashboard interfaces to run systematic concurrency tests across multiple load levels and token configurations.
 By generating comprehensive metrics including success rates, latency percentiles (P50/P95/P99), and token throughput, it empowers teams to optimize their API integration strategies and make informed scaling decisions.
 
-**Note:** This tool is designed specifically for **text input/output testing** with Together AI's chat completion API. It does not support image inputs, embeddings, or other API endpoints.
+**Note:** This tool is designed specifically for **text input/output testing** with Together AI's chat completion API. 
+It does not support image inputs, embeddings, or other API endpoints yet.
 
 ## Features
 
 - **Fast Concurrency Testing** - Test API limits with 32, 64, 128, 256+ concurrent requests
 - **Real-time Dashboard** - Web UI with live charts and metrics
 - **Comprehensive Metrics** - Latency (P50/P95/P99), throughput, success rates, token counts
-- **Simple & Clean** - Production-ready code based on proven async patterns
 
 ## Dashboard Screenshots
 
@@ -191,12 +191,7 @@ This tests all combinations of concurrency × input tokens × output tokens.
 
 This is a testing tool. Feel free to modify for your needs.
 
-## License
-
-MIT
-
 ---
 
-**Version:** 1.0  
-**Status:** Production Ready  
-**Last Updated:** December 2024
+**Version:** 0.1
+**Last Updated:** December 2025
