@@ -6,11 +6,16 @@ This module provides a Flask-based web dashboard with SocketIO for real-time
 concurrency testing of Together AI API. It allows users to test API performance
 under various concurrency levels and max token configurations.
 """
+import base64
 import os
 import sys
 import json
 import time
+import math
 import asyncio
+import urllib.request
+import tempfile
+from pathlib import Path
 from datetime import datetime
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
@@ -25,6 +30,12 @@ from test_runner import run_tests, save_results
 # Also import from test.py for fast mode (simple concurrency testing)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from test import make_request, PROMPT_TEMPLATE, DEFAULT_PROBLEM
+from together import AsyncTogether, Together
+
+# Utility placeholders (for future refactor; no behavior change now)
+from utils.concurrency import register_concurrency_utils
+from utils.images import register_image_utils
+from utils.batch import register_batch_utils
 
 # Initialize Flask application
 app = Flask(__name__)
@@ -46,6 +57,16 @@ current_test_state = {
     "current_test": None,   # Current test configuration
     "progress": {"current": 0, "total": 0},  # Progress tracking
 }
+
+# Batch API constraints
+MAX_BATCH_BYTES = 100 * 1024 * 1024  # 100 MB
+MAX_BATCH_REQUESTS = 50000
+MAX_BATCH_TOKENS_PER_MODEL = 30_000_000_000
+
+# Placeholder registrations (no-ops today; kept for future refactors)
+register_concurrency_utils(app, socketio)
+register_image_utils(app)
+register_batch_utils(app)
 
 
 def validate_input(config_dict: dict) -> tuple:
@@ -510,13 +531,20 @@ async def run_tests_with_updates(config: TestConfig, socketio_instance):
 
 
 @app.route("/")
+def home():
+    """Landing page to navigate to concurrency, images, and batch tests."""
+    return render_template("home.html")
+
+
+@app.route("/home.html")
+def home_html():
+    """Alias for home landing page."""
+    return render_template("home.html")
+
+
+@app.route("/concurrency")
 def index():
-    """
-    Serve the main dashboard page.
-    
-    Returns:
-        Rendered HTML template for the dashboard
-    """
+    """Serve the main concurrency dashboard page."""
     return render_template("index.html")
 
 
@@ -627,6 +655,386 @@ def handle_stop_test():
     # The actual cancellation of async tasks would require more complex logic
     current_test_state["running"] = False
     emit("test_stopped", {"message": "Test stopped"})
+
+
+# -----------------------------
+# Images test page + API
+# -----------------------------
+
+
+def _safe_int(value, default, min_value=None, max_value=None):
+    """Convert to int with bounds checking."""
+    try:
+        ivalue = int(value)
+    except (TypeError, ValueError):
+        return default
+    if min_value is not None:
+        ivalue = max(min_value, ivalue)
+    if max_value is not None:
+        ivalue = min(max_value, ivalue)
+    return ivalue
+
+
+def _percentile(values, pct):
+    """Lightweight percentile calculation without numpy."""
+    if not values:
+        return 0.0
+    vals = sorted(values)
+    k = (len(vals) - 1) * (pct / 100.0)
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return float(vals[int(k)])
+    d = k - f
+    return float(vals[f] * (1 - d) + vals[c] * d)
+
+
+def _make_run_dirs():
+    """Create run directory grouped by date; returns (run_id, run_dir Path)."""
+    now = datetime.now()
+    date_dir = Path("results") / now.strftime("%Y-%m-%d")
+    date_dir.mkdir(parents=True, exist_ok=True)
+    run_id = f"run_{now.strftime('%Y%m%d_%H%M%S_%f')}"
+    run_dir = date_dir / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_id, run_dir
+
+
+def _save_uploaded_reference(file_storage, run_dir: Path):
+    """Save uploaded reference image and return a data URL to use with the API."""
+    filename = file_storage.filename or "reference"
+    ext = ""
+    if "." in filename:
+        ext = filename.rsplit(".", 1)[-1]
+    safe_name = f"reference.{ext}" if ext else "reference"
+    ref_path = run_dir / safe_name
+    file_storage.save(ref_path)
+
+    # Encode as data URL so it can be passed to Together as image_url/reference_images
+    mime = "image/png" if ext.lower() == "png" else "image/jpeg"
+    with open(ref_path, "rb") as rf:
+        b64 = base64.b64encode(rf.read()).decode("utf-8")
+    data_url = f"data:{mime};base64,{b64}"
+    return str(ref_path), data_url
+
+
+def _save_generated_image(item, idx, run_dir: Path):
+    """Persist generated image (url or base64) to disk; return local path."""
+    target_path = run_dir / f"image_{idx}.png"
+    # URL case
+    if hasattr(item, "url") and item.url:
+        try:
+            urllib.request.urlretrieve(item.url, target_path)
+            return str(target_path)
+        except Exception:
+            return None
+    if isinstance(item, dict):
+        if item.get("url"):
+            try:
+                urllib.request.urlretrieve(item["url"], target_path)
+                return str(target_path)
+            except Exception:
+                return None
+        if item.get("b64_json"):
+            try:
+                data = base64.b64decode(item["b64_json"])
+                target_path.write_bytes(data)
+                return str(target_path)
+            except Exception:
+                return None
+    # b64 on object
+    if hasattr(item, "b64_json") and item.b64_json:
+        try:
+            data = base64.b64decode(item.b64_json)
+            target_path.write_bytes(data)
+            return str(target_path)
+        except Exception:
+            return None
+    return None
+
+
+@app.route("/images-test")
+def images_test():
+    """Serve the images test page."""
+    return render_template("images_test.html")
+
+
+@app.route("/api/images-test", methods=["POST"])
+def run_images_test_api():
+    """
+    Run a rate-limited image generation test against Together's images API.
+    Default rate limit is 1 request/second. This endpoint is independent of
+    existing concurrency tests and only targets image generation.
+    """
+    # Accept both JSON and multipart form (for file upload)
+    if request.content_type and request.content_type.startswith("multipart/form-data"):
+        form = request.form
+        payload = {
+            "api_key": form.get("api_key", ""),
+            "prompt": form.get("prompt", ""),
+            "model": form.get("model", ""),
+            "steps": form.get("steps"),
+            "width": form.get("width"),
+            "height": form.get("height"),
+            "n": form.get("n"),
+            "total_requests": form.get("total_requests"),
+            "requests_per_second": form.get("requests_per_second"),
+            "seed": form.get("seed"),
+            "image_url": form.get("image_url", ""),
+            "reference_images": form.get("reference_images", ""),
+            "disable_safety_checker": form.get("disable_safety_checker"),
+            "response_format": form.get("response_format", "url"),
+            "negative_prompt": form.get("negative_prompt", ""),
+        }
+        reference_file = request.files.get("reference_file")
+    else:
+        payload = request.get_json(silent=True) or {}
+        reference_file = None
+
+    api_key = (payload.get("api_key") or os.environ.get("TOGETHER_API_KEY", "")).strip()
+    if not api_key:
+        return jsonify({"error": "API key is required"}), 400
+
+    prompt = (payload.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"error": "Prompt is required"}), 400
+
+    model = (payload.get("model") or "black-forest-labs/FLUX.1-schnell").strip()
+    steps = _safe_int(payload.get("steps"), 4, min_value=1, max_value=50)
+    width = _safe_int(payload.get("width"), 1024, min_value=64, max_value=2048)
+    height = _safe_int(payload.get("height"), 1024, min_value=64, max_value=2048)
+    n = _safe_int(payload.get("n"), 1, min_value=1, max_value=4)
+    total_requests = _safe_int(payload.get("total_requests"), 5, min_value=1, max_value=50)
+    rps = _safe_int(payload.get("requests_per_second"), 1, min_value=1, max_value=10)
+    seed = payload.get("seed")
+    if seed is not None:
+        seed = _safe_int(seed, None)
+    image_url_raw = (payload.get("image_url") or "").strip()
+    use_image_url = str(payload.get("use_image_url") or "").lower() in {"1", "true", "on", "yes"}
+    image_url = image_url_raw if (use_image_url and image_url_raw) else None
+    disable_safety = bool(payload.get("disable_safety_checker"))
+    response_format = (payload.get("response_format") or "url").strip() or "url"
+    negative_prompt = (payload.get("negative_prompt") or "").strip() or None
+
+    # reference_images: comma-separated URLs
+    ref_images = []
+    ref_images_raw = payload.get("reference_images")
+    if ref_images_raw:
+        ref_images = [x.strip() for x in ref_images_raw.split(",") if x.strip()]
+
+    run_id, run_dir = _make_run_dirs()
+    saved_reference_local = None
+
+    # If a reference file is uploaded, store it and convert to data URL so it can be sent
+    if reference_file and reference_file.filename:
+        saved_reference_local, data_url = _save_uploaded_reference(reference_file, run_dir)
+        ref_images.append(data_url)
+        # If requested, also set as image_url (only if user opted in)
+        if use_image_url and not image_url:
+            image_url = data_url
+
+    client = Together(api_key=api_key)
+
+    results = []
+    success_count = 0
+    fail_count = 0
+    latencies = []
+    errors = []
+
+    delay = 1.0 / float(rps)
+    saved_files = []
+
+    for i in range(total_requests):
+        start = time.time()
+        try:
+            # Use generate (current Together SDK) – create is not available in this version
+            response = client.images.generate(
+                prompt=prompt,
+                model=model,
+                # steps=steps,
+                width=width,
+                height=height,
+                n=n,
+                seed=seed,
+                image_url=image_url if use_image_url else None,
+                reference_images=ref_images or None,
+                negative_prompt=negative_prompt,
+                response_format=response_format,
+                disable_safety_checker=disable_safety,
+            )
+            latency = time.time() - start
+
+            urls = []
+            b64s = []
+            try:
+                for item in response.data or []:
+                    if hasattr(item, "url"):
+                        urls.append(item.url)
+                    elif isinstance(item, dict) and "url" in item:
+                        urls.append(item["url"])
+                    if hasattr(item, "b64_json") and item.b64_json:
+                        b64s.append(item.b64_json)
+                    elif isinstance(item, dict) and item.get("b64_json"):
+                        b64s.append(item["b64_json"])
+                    # save image to disk
+                    saved = _save_generated_image(item, f"{i}_{len(urls)}", run_dir)
+                    if saved:
+                        saved_files.append(saved)
+            except Exception:
+                pass
+
+            latencies.append(latency)
+            success_count += 1
+            results.append(
+                {
+                    "index": i,
+                    "success": True,
+                    "latency": latency,
+                    "urls": urls,
+                    "b64": b64s,
+                }
+            )
+        except Exception as e:
+            latency = time.time() - start
+            fail_count += 1
+            errors.append(str(e))
+            results.append(
+                {
+                    "index": i,
+                    "success": False,
+                    "latency": latency,
+                    "error": str(e),
+                    "urls": [],
+                    "b64": [],  
+                }
+            )
+
+        if delay > 0:
+            time.sleep(delay)
+
+    avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+    summary = {
+        "total_requests": total_requests,
+        "successful": success_count,
+        "failed": fail_count,
+        "avg_latency": avg_latency,
+        "p50_latency": _percentile(latencies, 50),
+        "p95_latency": _percentile(latencies, 95),
+        "p99_latency": _percentile(latencies, 99),
+        "errors": errors[:5],
+        "results": results,
+        "run_id": run_id,
+        "saved_files": saved_files,
+        "run_dir": str(run_dir),
+        "saved_reference": saved_reference_local,
+    }
+
+    # Save summary JSON for reference
+    summary_path = run_dir / "summary.json"
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+
+    return jsonify(summary)
+
+
+# -----------------------------
+# Batch test page + API
+# -----------------------------
+
+
+@app.route("/batch-test")
+def batch_test():
+    """Serve the batch API test page."""
+    return render_template("batch_test.html")
+
+
+def _object_to_dict(obj):
+    """Best-effort serialization helper for Together client objects."""
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump()
+        except Exception:
+            pass
+    if hasattr(obj, "__dict__"):
+        return obj.__dict__
+    return {"repr": repr(obj)}
+
+
+@app.route("/api/batch/create", methods=["POST"])
+def batch_create():
+    """
+    Create a batch job using Together Batch API.
+
+    Validates:
+    - API key provided
+    - .jsonl file present
+    - File size <= 100MB (Batch API limit)
+    """
+    api_key = (request.form.get("api_key") or os.environ.get("TOGETHER_API_KEY", "")).strip()
+    if not api_key:
+        return jsonify({"error": "API key is required"}), 400
+
+    upload = request.files.get("batch_file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "Batch file (.jsonl) is required"}), 400
+
+    filename = upload.filename
+    if not filename.lower().endswith(".jsonl"):
+        return jsonify({"error": "Batch file must be .jsonl"}), 400
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            upload.save(tmp.name)
+            tmp_path = tmp.name
+
+        size = os.path.getsize(tmp_path)
+        if size > MAX_BATCH_BYTES:
+            return jsonify({"error": "Batch file exceeds 100MB limit"}), 400
+
+        client = Together(api_key=api_key)
+        file_resp = client.files.upload(file=tmp_path, purpose="batch-api", check=False)
+        batch = client.batches.create_batch(file_resp.id, endpoint="/v1/chat/completions")
+
+        file_id = file_resp.get("id") if isinstance(file_resp, dict) else getattr(file_resp, "id", None)
+        batch_data = _object_to_dict(batch)
+
+        return jsonify({
+            "file_id": file_id,
+            "batch": batch_data,
+            "limits": {
+                "max_requests": MAX_BATCH_REQUESTS,
+                "max_tokens_per_model": MAX_BATCH_TOKENS_PER_MODEL,
+                "max_file_bytes": MAX_BATCH_BYTES,
+            },
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
+@app.route("/api/batch/status/<batch_id>")
+def batch_status(batch_id):
+    """Get batch status by ID."""
+    api_key = (request.args.get("api_key") or os.environ.get("TOGETHER_API_KEY", "")).strip()
+    if not api_key:
+        return jsonify({"error": "API key is required"}), 400
+
+    try:
+        client = Together(api_key=api_key)
+        batch = client.batches.get_batch(batch_id)
+        return jsonify(_object_to_dict(batch))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 
 if __name__ == "__main__":

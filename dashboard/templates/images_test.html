@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Together AI Image Test</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a;
+            margin: 0;
+            padding: 24px;
+            color: #e2e8f0;
+        }
+        .shell {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .pill {
+            background: rgba(99,102,241,0.14);
+            padding: 8px 14px;
+            border-radius: 999px;
+            color: #cbd5f5;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        .workspace {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 16px;
+        }
+        .card {
+            background: #0b1220;
+            border: 1px solid #1f2937;
+            border-radius: 16px;
+            padding: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+        }
+        .card h3 { margin: 0 0 12px 0; color: #e5e7eb; }
+        .stack { display: flex; flex-direction: column; gap: 12px; }
+        label { font-size: 13px; color: #cbd5f5; font-weight: 600; margin-bottom: 4px; display: block; }
+        input, textarea, select {
+            width: 100%;
+            padding: 10px 12px;
+            background: #0f172a;
+            color: #e2e8f0;
+            border: 1px solid #1f2937;
+            border-radius: 10px;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        input:focus, textarea:focus, select:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,0.35); }
+        textarea { min-height: 160px; resize: vertical; }
+        .inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        button {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white;
+            border: none;
+            padding: 12px 18px;
+            border-radius: 10px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(99,102,241,0.35); }
+        .muted { color: #94a3b8; font-size: 12px; }
+        .summary, .results { margin-top: 18px; }
+        .summary-card { background: #0b1220; border: 1px solid #1f2937; border-radius: 12px; padding: 14px; }
+        .results-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+        .result-card { border: 1px solid #1f2937; border-radius: 12px; padding: 12px; background: #0f172a; }
+        .result-card img { max-width: 100%; border-radius: 8px; display: block; }
+        .badge { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+        .badge.success { background: rgba(22,101,52,0.3); color: #4ade80; }
+        .badge.error { background: rgba(148,27,27,0.3); color: #f87171; }
+        .error-box { background: rgba(185,28,28,0.15); border: 1px solid #fca5a5; border-radius: 12px; padding: 12px; color: #fecdd3; }
+        .image-link { word-break: break-all; font-size: 12px; color: #93c5fd; }
+        .upload-line { padding: 10px; border: 1px dashed #334155; border-radius: 10px; background: #0f172a; }
+        @media (max-width: 960px) {
+            .workspace { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <div class="topbar">
+            <div class="pill">Together AI • Images Playground</div>
+            <div class="muted">Images are saved to <code>results/&lt;date&gt;/&lt;run_id&gt;</code></div>
+        </div>
+
+        <div class="workspace">
+            <div class="card">
+                <h3>Prompt & Reference</h3>
+                <form id="imageForm" enctype="multipart/form-data" class="stack">
+                    <div>
+                        <label for="apiKey">API Key</label>
+                        <input id="apiKey" type="password" placeholder="TOGETHER_API_KEY (or leave empty to use env)">
+                    </div>
+                    <div>
+                        <label for="prompt">Prompt</label>
+                        <textarea id="prompt" placeholder="A serene mountain landscape at sunset with a lake reflection" required></textarea>
+                    </div>
+                    <div class="two-col">
+                        <div>
+                            <label for="imageUrl">Reference image URL (optional)</label>
+                            <input id="imageUrl" type="url" placeholder="https://...">
+                            <div class="muted" style="margin-top:4px;">
+                                <label class="inline" style="gap:6px;">
+                                    <input id="useImageUrl" type="checkbox"> send as image_url (only if supported)
+                                </label>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="referenceImages">Reference image URLs (comma-separated)</label>
+                            <input id="referenceImages" type="text" placeholder="https://img1, https://img2">
+                        </div>
+                    </div>
+                    <div class="upload-line">
+                        <div class="inline" style="gap:8px;">
+                            <input id="referenceFile" type="file" accept="image/*">
+                            <span class="muted">Upload reference image (stored with run and sent as data URL)</span>
+                        </div>
+                    </div>
+                    <div>
+                        <label for="negativePrompt">Negative prompt (optional)</label>
+                        <input id="negativePrompt" type="text" placeholder="blurry, low quality, distorted">
+                    </div>
+                    <div class="inline" style="gap:12px;">
+                        <button type="submit" id="runBtn">Run</button>
+                        <span id="statusText" class="muted" style="font-weight:600;">Idle</span>
+                    </div>
+                </form>
+            </div>
+
+            <div class="card">
+                <h3>Settings</h3>
+                <div class="stack">
+                    <div>
+                        <label for="model">Model</label>
+                        <input id="model" type="text" value="black-forest-labs/FLUX.1-schnell" required>
+                        <div class="muted">Example: black-forest-labs/FLUX.1-schnell</div>
+                    </div>
+                    <div class="two-col">
+                        <div>
+                            <label for="steps">Steps (1-50)</label>
+                            <input id="steps" type="number" min="1" max="50" value="4">
+                        </div>
+                        <div>
+                            <label for="responseFormat">Response format</label>
+                            <select id="responseFormat">
+                                <option value="url" selected>url</option>
+                                <option value="base64">base64</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="two-col">
+                        <div>
+                            <label for="width">Width (px)</label>
+                            <input id="width" type="number" min="64" max="2048" value="1024">
+                        </div>
+                        <div>
+                            <label for="height">Height (px)</label>
+                            <input id="height" type="number" min="64" max="2048" value="1024">
+                        </div>
+                    </div>
+                    <div class="two-col">
+                        <div>
+                            <label for="n">Variations per request (1-4)</label>
+                            <input id="n" type="number" min="1" max="4" value="1">
+                        </div>
+                        <div>
+                            <label for="seed">Seed (optional)</label>
+                            <input id="seed" type="number" placeholder="e.g., 42">
+                        </div>
+                    </div>
+                    <div class="two-col">
+                        <div>
+                            <label for="totalRequests">Total requests</label>
+                            <input id="totalRequests" type="number" min="1" max="50" value="5">
+                            <div class="muted">Cap 50 to avoid runaway tests</div>
+                        </div>
+                        <div>
+                            <label for="rps">Requests per second</label>
+                            <input id="rps" type="number" min="1" max="10" value="1">
+                            <div class="muted">Default 1 req/s</div>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="inline" style="gap:6px;">
+                            <input id="disableSafety" type="checkbox">
+                            Disable safety checker
+                        </label>
+                        <div class="muted">Not supported on some free models</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card summary" id="summary" style="display:none; margin-top:16px;">
+            <div class="summary-card" id="summaryCard"></div>
+        </div>
+
+        <div class="card results" id="results" style="display:none; margin-top:16px;">
+            <h3>Results</h3>
+            <div class="results-grid" id="resultsGrid"></div>
+        </div>
+
+        <div id="errorBox" style="display:none;" class="error-box"></div>
+    </div>
+
+    <script>
+        const form = document.getElementById('imageForm');
+        const statusText = document.getElementById('statusText');
+        const runBtn = document.getElementById('runBtn');
+        const summary = document.getElementById('summary');
+        const summaryCard = document.getElementById('summaryCard');
+        const results = document.getElementById('results');
+        const resultsGrid = document.getElementById('resultsGrid');
+        const errorBox = document.getElementById('errorBox');
+
+        function showError(message) {
+            errorBox.style.display = 'block';
+            errorBox.textContent = message;
+        }
+
+        function clearError() {
+            errorBox.style.display = 'none';
+            errorBox.textContent = '';
+        }
+
+        function validateInputs() {
+            const prompt = document.getElementById('prompt').value.trim();
+            if (!prompt) {
+                showError('Prompt is required.');
+                return false;
+            }
+            return true;
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!validateInputs()) return;
+            clearError();
+            statusText.textContent = 'Running...';
+            runBtn.disabled = true;
+            summary.style.display = 'none';
+            results.style.display = 'none';
+
+            const fd = new FormData();
+            fd.append('api_key', document.getElementById('apiKey').value.trim());
+            fd.append('prompt', document.getElementById('prompt').value.trim());
+            fd.append('model', document.getElementById('model').value.trim());
+            fd.append('steps', document.getElementById('steps').value);
+            fd.append('width', document.getElementById('width').value);
+            fd.append('height', document.getElementById('height').value);
+            fd.append('n', document.getElementById('n').value);
+            fd.append('total_requests', document.getElementById('totalRequests').value);
+            fd.append('requests_per_second', document.getElementById('rps').value);
+            fd.append('seed', document.getElementById('seed').value);
+            const imageUrlVal = document.getElementById('imageUrl').value.trim();
+            const useImageUrl = document.getElementById('useImageUrl').checked;
+            if (useImageUrl && imageUrlVal) {
+                fd.append('image_url', imageUrlVal);
+                fd.append('use_image_url', 'true');
+            }
+            fd.append('reference_images', document.getElementById('referenceImages').value.trim());
+            fd.append('response_format', document.getElementById('responseFormat').value);
+            fd.append('negative_prompt', document.getElementById('negativePrompt').value);
+            if (document.getElementById('disableSafety').checked) {
+                fd.append('disable_safety_checker', 'true');
+            }
+            const refFile = document.getElementById('referenceFile').files[0];
+            if (refFile) {
+                fd.append('reference_file', refFile);
+            }
+
+            try {
+                const res = await fetch('/api/images-test', {
+                    method: 'POST',
+                    body: fd,
+                });
+
+                const data = await res.json();
+                if (!res.ok) {
+                    showError(data.error || 'Request failed');
+                    statusText.textContent = 'Error';
+                } else {
+                    renderSummary(data);
+                    renderResults(data.results || [], data.response_format || document.getElementById('responseFormat').value);
+                    statusText.textContent = 'Done';
+                }
+            } catch (err) {
+                showError(err.message || 'Unexpected error');
+                statusText.textContent = 'Error';
+            } finally {
+                runBtn.disabled = false;
+            }
+        });
+
+        function renderSummary(data) {
+            summary.style.display = 'block';
+            summaryCard.innerHTML = `
+                <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                    <div><strong>Total:</strong> ${data.total_requests}</div>
+                    <div><strong>Success:</strong> ${data.successful}</div>
+                    <div><strong>Failed:</strong> ${data.failed}</div>
+                    <div><strong>Avg latency:</strong> ${data.avg_latency.toFixed(2)}s</div>
+                    <div><strong>P50:</strong> ${data.p50_latency.toFixed(2)}s</div>
+                    <div><strong>P95:</strong> ${data.p95_latency.toFixed(2)}s</div>
+                    <div><strong>P99:</strong> ${data.p99_latency.toFixed(2)}s</div>
+                    ${data.run_id ? `<div><strong>Run ID:</strong> ${data.run_id}</div>` : ''}
+                    ${data.run_dir ? `<div><strong>Saved to:</strong> ${data.run_dir}</div>` : ''}
+                </div>
+                ${data.errors && data.errors.length ? `<div style="margin-top:8px;"><strong>Errors:</strong> ${data.errors.join(' | ')}</div>` : ''}
+                ${data.saved_reference ? `<div style="margin-top:8px;"><strong>Reference saved:</strong> ${data.saved_reference}</div>` : ''}
+                ${data.saved_files && data.saved_files.length ? `<div style="margin-top:8px;"><strong>Generated saved:</strong> ${data.saved_files.length} files</div>` : ''}
+            `;
+        }
+
+        function renderResults(items, responseFormat) {
+            results.style.display = 'block';
+            resultsGrid.innerHTML = items.map(item => {
+                const badge = item.success ? '<span class="badge success">OK</span>' : '<span class="badge error">ERR</span>';
+                const imageBlocks = [];
+                (item.urls || []).forEach(url => {
+                    imageBlocks.push(`
+                        <div>
+                            <a class="image-link" href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>
+                            <div><img src="${url}" alt="generated image"></div>
+                        </div>
+                    `);
+                });
+                (item.b64 || []).forEach(b64 => {
+                    const dataUrl = `data:image/png;base64,${b64}`;
+                    imageBlocks.push(`
+                        <div>
+                            <div class="muted">base64</div>
+                            <div><img src="${dataUrl}" alt="generated image"></div>
+                        </div>
+                    `);
+                });
+                if (imageBlocks.length === 0) {
+                    imageBlocks.push(`<div class="muted">No image returned</div>`);
+                }
+                return `
+                    <div class="result-card">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div><strong>#${item.index}</strong></div>
+                            ${badge}
+                        </div>
+                        <div style="margin:6px 0;"><small>Latency: ${item.latency.toFixed(2)}s</small></div>
+                        ${item.error ? `<div class="error-box" style="margin:6px 0;">${item.error}</div>` : ''}
+                        ${imageBlocks.join('')}
+                    </div>
+                `;
+            }).join('');
+        }
+    </script>
+</body>
+</html>
